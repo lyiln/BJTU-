@@ -1,0 +1,36 @@
+[project]
+name = "bjtu-room-finder"
+version = "0.1.0"
+description = "Local BJTU empty classroom finder."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "beautifulsoup4>=4.12.0",
+    "fastapi>=0.115.0",
+    "keyring>=25.0.0",
+    "playwright>=1.48.0",
+    "pydantic>=2.8.0",
+    "uvicorn[standard]>=0.30.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+]
+
+[project.scripts]
+bjtu-rooms = "bjtu_rooms.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.uv]
+package = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["bjtu_rooms"]

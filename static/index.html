@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BJTU 空教室</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <h1>BJTU 空教室</h1>
+          <p id="statusText">正在读取本地数据...</p>
+        </div>
+        <button id="syncButton" class="secondary">立即同步</button>
+      </section>
+
+      <section class="grid">
+        <form id="searchForm" class="panel primary-panel">
+          <div class="field">
+            <label for="dateInput">日期</label>
+            <input id="dateInput" name="date" type="date" required />
+          </div>
+          <div class="field inline-fields">
+            <label>节次</label>
+            <div class="periods">
+              <select id="startPeriod" name="start_period"></select>
+              <span>到</span>
+              <select id="endPeriod" name="end_period"></select>
+            </div>
+          </div>
+          <div class="field">
+            <label for="buildingInput">教学楼</label>
+            <select id="buildingInput" name="building">
+              <option value="">全部教学楼</option>
+            </select>
+          </div>
+          <button type="submit">查询空教室</button>
+        </form>
+
+        <form id="preferenceForm" class="panel">
+          <h2>偏好排序</h2>
+          <div class="field">
+            <label for="buildingPrefs">偏好楼栋</label>
+            <input id="buildingPrefs" placeholder="yf, sy, sd" />
+          </div>
+          <div class="field">
+            <label for="roomPrefs">偏好教室开头</label>
+            <input id="roomPrefs" placeholder="4, 5, 6" />
+          </div>
+          <button type="submit" class="secondary">保存偏好</button>
+        </form>
+
+        <form id="credentialForm" class="panel">
+          <h2>教务账号</h2>
+          <div class="field">
+            <label for="usernameInput">账号</label>
+            <input id="usernameInput" autocomplete="username" />
+          </div>
+          <div class="field">
+            <label for="passwordInput">密码</label>
+            <input id="passwordInput" type="password" autocomplete="current-password" />
+          </div>
+          <button type="submit" class="secondary">保存到本机钥匙串</button>
+        </form>
+      </section>
+
+      <section class="results">
+        <div class="results-head">
+          <h2>查询结果</h2>
+          <span id="resultCount">尚未查询</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>教室</th>
+                <th>楼栋</th>
+                <th>可空到</th>
+                <th>连续空闲</th>
+                <th>偏好</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody">
+              <tr>
+                <td colspan="5" class="empty">选择日期和节次后查询。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" role="status" aria-live="polite"></div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
