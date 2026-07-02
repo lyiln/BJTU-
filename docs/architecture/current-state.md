@@ -18,8 +18,8 @@
 | `bjtu_rooms/sync.py` | 确认同步和 Playwright 抓取流程 | `sync_today()` 调用 `fetch_classroom_data()`，解析后写入数据库并保存同步状态。 |
 | `bjtu_rooms/parser.py` | 确认 HTML 解析策略 | 支持 JSON-like payload、BJTU 周视图表格、通用表格、文本兜底；白色背景视为空闲。 |
 | `bjtu_rooms/credentials.py` | 确认账号密码存储 | 用户名写入 settings；密码通过 `keyring` 存取，service name 为 `bjtu-room-finder`。 |
-| `static/index.html` | 确认页面结构和结果表列 | 结果表当前列为教室、楼栋、今日状态、连续空闲、偏好；没有“可空到”列。 |
-| `static/app.js` | 确认前端状态、fetch、渲染逻辑 | 初始化读取状态/楼栋/偏好；搜索调用 `/api/search`；`renderPeriodStatuses()` 渲染 1-7 节状态点，缺字段时显示“暂无状态”。 |
+| `static/index.html` | 确认页面结构、日期快捷入口和结果表列 | 日期输入旁有“今天”“明天”快捷按钮；同步按钮文案为“同步本周数据”；结果表当前列为教室、楼栋、今日状态、连续空闲、偏好。 |
+| `static/app.js` | 确认前端状态、fetch、日期切换、渲染逻辑 | 初始化读取状态/楼栋/偏好；搜索调用 `/api/search`；“今天”“明天”按钮分别设置本地今天/次日日期，已查询后会自动重查；`renderPeriodStatuses()` 渲染 1-7 节状态点。 |
 | `tests/test_core.py` | 确认核心行为测试 | 覆盖搜索排序、占用排除、`period_statuses` 生成和 `asdict()` 序列化结构。 |
 
 ## Confirmed Facts
@@ -32,12 +32,14 @@
 | 搜索接口是 `GET /api/search`，参数包括 `date`、`start_period`、`end_period`、可选 `building`。 | `bjtu_rooms/app.py:search()`。 | Source Code | Confirmed |
 | 搜索结果后端包含 `period_statuses` 字段。 | `bjtu_rooms/models.py:SearchResult.period_statuses`；`bjtu_rooms/core.py:search_empty_rooms()` 填充该字段。 | Source Code | Confirmed |
 | 前端当前不展示“可空到”列。 | `static/index.html` 的表头只有教室、楼栋、今日状态、连续空闲、偏好；`static/app.js:renderResults()` 不渲染 `free_until_period`。 | Source Code | Confirmed |
+| 前端提供“今天”“明天”快捷日期入口。 | `static/index.html` 定义 `todayButton` / `tomorrowButton`；`static/app.js:setDateFromToday()` 设置日期并在已有搜索后自动重查。 | Source Code | Confirmed |
+| 同步 UI 明确表达为同步本周数据。 | `static/index.html` 的同步按钮文本为“同步本周数据”；`static/app.js` 的同步 toast 为“开始同步本周教室数据...”。 | Source Code | Confirmed |
 | 前端遇到缺失 `period_statuses` 会显示“暂无状态”，不会再直接 `.map` 崩溃。 | `static/app.js:renderPeriodStatuses()` 先检查 `Array.isArray(statuses)`。 | Source Code | Confirmed |
 | SQLite 数据库路径是 `data/rooms.sqlite3`。 | `bjtu_rooms/storage.py:DB_PATH = DATA_DIR / "rooms.sqlite3"`。 | Source Code | Confirmed |
 | 同步状态保存在 `sync_state` 表，偏好保存在 `preferences` 表。 | `bjtu_rooms/storage.py:init_db()` 建表 SQL。 | Database Schema | Confirmed |
 | 账号用户名存入 settings，密码存入系统 keyring。 | `bjtu_rooms/credentials.py:get_username()`、`save_username()`、`save_password()`。 | Source Code | Confirmed |
 | 教务同步依赖 Playwright 打开 BJTU 教务系统并解析课堂占用 HTML。 | `bjtu_rooms/sync.py:fetch_classroom_data()` 使用 `async_playwright()`；`parse_classroom_html()` 处理 HTML。 | Source Code | Confirmed |
-| 最近提交为 `a19457b Fix room status rendering`。 | `git log --oneline -n 5` 输出。 | Config | Confirmed |
+| 最近提交为 `3c01697 Add project state handoff docs`。 | `git log --oneline -n 3` 输出。 | Config | Confirmed |
 
 ## Entry Points
 | Entry | File | Function / Component | Evidence |
@@ -50,6 +52,7 @@
 | 搜索 API | `bjtu_rooms/app.py` | `GET /api/search` | 读取数据库后调用 `search_empty_rooms()`。 |
 | 同步 API | `bjtu_rooms/app.py` | `POST /api/sync` | 调用 `sync_today()`。 |
 | 前端初始化 | `static/app.js` | `init()` | 设置今天日期、填充节次、加载状态/楼栋/偏好。 |
+| 日期快捷入口 | `static/index.html` / `static/app.js` | `todayButton` / `tomorrowButton` / `setDateFromToday()` | 点击“今天”或“明天”设置日期；已有搜索结果时自动重新查询。 |
 
 ## Call Chain
 ```text
@@ -86,6 +89,7 @@
 | Data | From | To | Evidence |
 |---|---|---|---|
 | Search parameters | `static/app.js:runSearch()` | `/api/search` query string | Uses `URLSearchParams` with date/start/end/building. |
+| Date shortcut selection | `static/app.js:setDateFromToday()` | `dateInput.value` -> optional `runSearch()` | Offset 0 selects local today; offset 1 selects local tomorrow; if `hasSearched` is true, it reruns search. |
 | Rooms | SQLite `rooms` table | `load_rooms()` -> `search_empty_rooms()` | `storage.load_rooms()` returns `list[Room]`. |
 | Occupancies | SQLite `occupancies` table | `load_occupancy_by_room()` -> `search_empty_rooms()` | `storage.load_occupancy_by_room()` groups records by raw room name. |
 | Preferences | SQLite `preferences` table | `get_preference()` -> `preference_score()` | `storage.get_preference()` returns `Preference`; `core.preference_score()` scores building/prefix. |
@@ -130,7 +134,7 @@
 ## Async Jobs
 - App startup uses `lifespan()` in `bjtu_rooms/app.py`; if `sync_state.last_sync_date != date.today()`, it schedules `_startup_sync()` with `asyncio.create_task()`.
 - `_startup_sync()` catches all exceptions and suppresses them. Confirmed behavior: startup sync failures do not prevent the app from serving.
-- Manual sync is `POST /api/sync`; it awaits `sync_today()` and returns either `{"ok": true, "message": ...}` or an HTTP 400 with error detail.
+- Manual sync is `POST /api/sync`; it awaits `sync_today()` and returns either `{"ok": true, "message": ...}` or an HTTP 400 with error detail. The UI labels this as syncing weekly data because the BJTU room page is parsed as a week view.
 
 ## Error Handling
 - `/api/search` catches `ValueError` from `validate_period_range()` and returns HTTP 400 with the message.
@@ -145,6 +149,7 @@
 - `sync_today()` raises `SyncError` if no rooms are parsed.
 - `fetch_classroom_data()` falls back to headed Playwright mode if the fetched page still looks like a login page and the initial run was headless.
 - Parser supports several structures, but BJTU HTML changes remain a known parser maintenance risk.
+- Clicking “今天” or “明天” before any search only changes the date input; clicking after a successful search also refreshes results.
 
 ## Risks
 | Risk | Evidence | Impact | Suggested Next Step |
@@ -171,5 +176,5 @@
 - `task-planning-flow`：如果要调整行为，例如记录启动同步失败、增加 API 集成测试、改变 dev 启动方式，先出小任务方案。
 - `bugfix-flow`：如果再次出现搜索状态缺失、同步错误、解析结果异常，先按 bug 流程复现和定位。
 - `execute-agent`：如果已有明确方案并批准实现，再修改源码和测试。
-- `review-agent`：如果需要对最近提交 `a19457b Fix room status rendering` 做第二视角复核，可只读审查 diff。
+- `review-agent`：如果需要对最近提交 `3c01697 Add project state handoff docs` 或后续功能 diff 做第二视角复核，可只读审查 diff。
 - `sync-docs-flow`：后续如果继续修改 API、状态流转或数据库逻辑，应同步更新本文档或拆分到更细的模块文档。

@@ -109,6 +109,18 @@ p,
   gap: 7px;
 }
 
+.date-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.date-shortcuts {
+  display: inline-flex;
+  gap: 6px;
+}
+
 label {
   color: var(--muted);
   font-size: 13px;
@@ -148,6 +160,11 @@ button:hover {
 button:disabled {
   cursor: wait;
   opacity: 0.65;
+}
+
+.mini-button {
+  min-height: 40px;
+  padding: 0 11px;
 }
 
 .secondary {
@@ -345,5 +362,14 @@ th {
   .topbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .date-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .date-shortcuts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
 }

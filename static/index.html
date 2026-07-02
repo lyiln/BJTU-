@@ -15,7 +15,7 @@
         </div>
         <div class="top-actions">
           <button id="accountButton" class="secondary" type="button">保存教务账号</button>
-          <button id="syncButton" class="secondary" type="button">立即同步</button>
+          <button id="syncButton" class="secondary" type="button">同步本周数据</button>
         </div>
       </section>
 
@@ -23,7 +23,13 @@
         <form id="searchForm" class="panel primary-panel">
           <div class="field">
             <label for="dateInput">日期</label>
-            <input id="dateInput" name="date" type="date" required />
+            <div class="date-controls">
+              <input id="dateInput" name="date" type="date" required />
+              <div class="date-shortcuts" aria-label="日期快捷选择">
+                <button id="todayButton" class="secondary mini-button" type="button">今天</button>
+                <button id="tomorrowButton" class="secondary mini-button" type="button">明天</button>
+              </div>
+            </div>
           </div>
           <div class="field inline-fields">
             <label>节次</label>

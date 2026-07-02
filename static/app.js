@@ -8,6 +8,8 @@ const accountModal = document.querySelector("#accountModal");
 const closeAccountButton = document.querySelector("#closeAccountButton");
 const cancelAccountButton = document.querySelector("#cancelAccountButton");
 const dateInput = document.querySelector("#dateInput");
+const todayButton = document.querySelector("#todayButton");
+const tomorrowButton = document.querySelector("#tomorrowButton");
 const startPeriod = document.querySelector("#startPeriod");
 const endPeriod = document.querySelector("#endPeriod");
 const buildingInput = document.querySelector("#buildingInput");
@@ -49,10 +51,10 @@ function fillPeriods() {
 
 syncButton.addEventListener("click", async () => {
   syncButton.disabled = true;
-  showToast("开始同步教务系统数据...");
+  showToast("开始同步本周教室数据...");
   try {
     const payload = await requestJson("/api/sync", { method: "POST" });
-    showToast(payload.message || "同步完成。");
+    showToast(payload.message || "本周数据同步完成。");
     await loadStatus();
     await loadBuildings();
     if (hasSearched) {
@@ -71,6 +73,14 @@ searchForm.addEventListener("submit", async (event) => {
   await runSearch();
 });
 
+todayButton.addEventListener("click", async () => {
+  await setDateFromToday(0);
+});
+
+tomorrowButton.addEventListener("click", async () => {
+  await setDateFromToday(1);
+});
+
 async function runSearch() {
   const params = new URLSearchParams({
     date: dateInput.value,
@@ -86,6 +96,15 @@ async function runSearch() {
     hasSearched = true;
   } catch (error) {
     showToast(error.message, true);
+  }
+}
+
+async function setDateFromToday(offsetDays) {
+  const targetDate = new Date();
+  targetDate.setDate(targetDate.getDate() + offsetDays);
+  dateInput.value = formatLocalDate(targetDate);
+  if (hasSearched) {
+    await runSearch();
   }
 }
 
