@@ -13,7 +13,10 @@
           <h1>BJTU 空教室</h1>
           <p id="statusText">正在读取本地数据...</p>
         </div>
-        <button id="syncButton" class="secondary">立即同步</button>
+        <div class="top-actions">
+          <button id="accountButton" class="secondary" type="button">保存教务账号</button>
+          <button id="syncButton" class="secondary" type="button">立即同步</button>
+        </div>
       </section>
 
       <section class="grid">
@@ -39,7 +42,7 @@
           <button type="submit">查询空教室</button>
         </form>
 
-        <form id="preferenceForm" class="panel">
+        <form id="preferenceForm" class="panel preference-panel">
           <h2>偏好排序</h2>
           <div class="field">
             <label for="buildingPrefs">偏好楼栋</label>
@@ -50,19 +53,6 @@
             <input id="roomPrefs" placeholder="4, 5, 6" />
           </div>
           <button type="submit" class="secondary">保存偏好</button>
-        </form>
-
-        <form id="credentialForm" class="panel">
-          <h2>教务账号</h2>
-          <div class="field">
-            <label for="usernameInput">账号</label>
-            <input id="usernameInput" autocomplete="username" />
-          </div>
-          <div class="field">
-            <label for="passwordInput">密码</label>
-            <input id="passwordInput" type="password" autocomplete="current-password" />
-          </div>
-          <button type="submit" class="secondary">保存到本机钥匙串</button>
         </form>
       </section>
 
@@ -77,7 +67,7 @@
               <tr>
                 <th>教室</th>
                 <th>楼栋</th>
-                <th>可空到</th>
+                <th>今日状态</th>
                 <th>连续空闲</th>
                 <th>偏好</th>
               </tr>
@@ -91,6 +81,27 @@
         </div>
       </section>
     </main>
+
+    <div id="accountModal" class="modal-backdrop" hidden>
+      <form id="credentialForm" class="modal" aria-labelledby="accountTitle">
+        <div class="modal-head">
+          <h2 id="accountTitle">教务账号</h2>
+          <button id="closeAccountButton" class="icon-button" type="button" aria-label="关闭">×</button>
+        </div>
+        <div class="field">
+          <label for="usernameInput">账号</label>
+          <input id="usernameInput" autocomplete="username" />
+        </div>
+        <div class="field">
+          <label for="passwordInput">密码</label>
+          <input id="passwordInput" type="password" autocomplete="current-password" />
+        </div>
+        <div class="modal-actions">
+          <button id="cancelAccountButton" class="secondary" type="button">取消</button>
+          <button type="submit">保存到本机钥匙串</button>
+        </div>
+      </form>
+    </div>
 
     <div id="toast" role="status" aria-live="polite"></div>
     <script src="/static/app.js"></script>

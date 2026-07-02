@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import date
 
 import pytest
 
-from bjtu_rooms.core import ranges_overlap, search_empty_rooms
+from bjtu_rooms.core import period_statuses, ranges_overlap, search_empty_rooms
 from bjtu_rooms.models import Occupancy, Preference, Room
 
 
@@ -44,6 +45,14 @@ def test_search_empty_rooms_prefers_favorite_building_then_free_duration() -> No
     assert [item.raw_name for item in results] == ["YF401", "YF201", "SY101"]
     assert results[0].preference_matched is True
     assert results[0].free_until_period == 6
+    assert [status.period for status in results[0].period_statuses] == [1, 2, 3, 4, 5, 6, 7]
+    assert [status.period for status in results[0].period_statuses if status.selected] == [3, 4]
+    payload = asdict(results[0])
+    assert payload["period_statuses"][0] == {
+        "period": 1,
+        "available": True,
+        "selected": False,
+    }
 
 
 def test_search_excludes_occupied_rooms() -> None:
@@ -61,3 +70,26 @@ def test_search_excludes_occupied_rooms() -> None:
     )
 
     assert results == []
+
+
+def test_period_statuses_marks_availability_and_selected_periods() -> None:
+    day = date(2026, 7, 2)
+    statuses = period_statuses(
+        [
+            Occupancy("YF401", day, 2, 2),
+            Occupancy("YF401", day, 5, 6),
+        ],
+        day,
+        selected_start_period=3,
+        selected_end_period=5,
+    )
+
+    assert [(status.period, status.available, status.selected) for status in statuses] == [
+        (1, True, False),
+        (2, False, False),
+        (3, True, True),
+        (4, True, True),
+        (5, False, True),
+        (6, False, False),
+        (7, True, False),
+    ]

@@ -30,6 +30,13 @@ class Preference:
 
 
 @dataclass(frozen=True)
+class PeriodStatus:
+    period: int
+    available: bool
+    selected: bool
+
+
+@dataclass(frozen=True)
 class SearchResult:
     building: str
     building_label: str
@@ -40,6 +47,7 @@ class SearchResult:
     continuous_free_periods: int
     preference_matched: bool
     preference_score: int
+    period_statuses: tuple[PeriodStatus, ...]
 
 
 @dataclass(frozen=True)

@@ -4,7 +4,7 @@ import re
 from collections.abc import Iterable
 from datetime import date
 
-from .models import MAX_PERIOD, Occupancy, Preference, Room, SearchResult
+from .models import MAX_PERIOD, Occupancy, PeriodStatus, Preference, Room, SearchResult
 
 BUILDING_LABELS = {
     "sy": "思源楼",
@@ -131,6 +131,12 @@ def search_empty_rooms(
                 continuous_free_periods=free_until - start_period + 1,
                 preference_matched=score > 0,
                 preference_score=score,
+                period_statuses=period_statuses(
+                    occupancies,
+                    day,
+                    selected_start_period=start_period,
+                    selected_end_period=end_period,
+                ),
             )
         )
 
@@ -148,6 +154,25 @@ def search_empty_rooms(
 def natural_room_key(value: str) -> tuple[object, ...]:
     parts = re.split(r"(\d+)", value.lower())
     return tuple(int(part) if part.isdigit() else part for part in parts)
+
+
+def period_statuses(
+    occupancies: Iterable[Occupancy],
+    day: date,
+    *,
+    selected_start_period: int,
+    selected_end_period: int,
+) -> tuple[PeriodStatus, ...]:
+    validate_period_range(selected_start_period, selected_end_period)
+    occupancy_list = list(occupancies)
+    return tuple(
+        PeriodStatus(
+            period=period,
+            available=is_room_free(occupancy_list, day, period, period),
+            selected=selected_start_period <= period <= selected_end_period,
+        )
+        for period in range(1, MAX_PERIOD + 1)
+    )
 
 
 def building_label(building: str) -> str:

@@ -1,8 +1,12 @@
 const statusText = document.querySelector("#statusText");
+const accountButton = document.querySelector("#accountButton");
 const syncButton = document.querySelector("#syncButton");
 const searchForm = document.querySelector("#searchForm");
 const preferenceForm = document.querySelector("#preferenceForm");
 const credentialForm = document.querySelector("#credentialForm");
+const accountModal = document.querySelector("#accountModal");
+const closeAccountButton = document.querySelector("#closeAccountButton");
+const cancelAccountButton = document.querySelector("#cancelAccountButton");
 const dateInput = document.querySelector("#dateInput");
 const startPeriod = document.querySelector("#startPeriod");
 const endPeriod = document.querySelector("#endPeriod");
@@ -14,6 +18,7 @@ const passwordInput = document.querySelector("#passwordInput");
 const resultCount = document.querySelector("#resultCount");
 const resultsBody = document.querySelector("#resultsBody");
 const toast = document.querySelector("#toast");
+let hasSearched = false;
 
 init();
 
@@ -47,9 +52,12 @@ syncButton.addEventListener("click", async () => {
   showToast("开始同步教务系统数据...");
   try {
     const payload = await requestJson("/api/sync", { method: "POST" });
-    showToast(payload.message);
+    showToast(payload.message || "同步完成。");
     await loadStatus();
     await loadBuildings();
+    if (hasSearched) {
+      await runSearch();
+    }
   } catch (error) {
     showToast(error.message, true);
     await loadStatus();
@@ -60,6 +68,10 @@ syncButton.addEventListener("click", async () => {
 
 searchForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  await runSearch();
+});
+
+async function runSearch() {
   const params = new URLSearchParams({
     date: dateInput.value,
     start_period: startPeriod.value,
@@ -70,11 +82,12 @@ searchForm.addEventListener("submit", async (event) => {
   }
   try {
     const payload = await requestJson(`/api/search?${params.toString()}`);
-    renderResults(payload.items);
+    renderResults(toArray(payload.items));
+    hasSearched = true;
   } catch (error) {
     showToast(error.message, true);
   }
-});
+}
 
 preferenceForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -89,8 +102,25 @@ preferenceForm.addEventListener("submit", async (event) => {
       body: JSON.stringify(payload),
     });
     showToast("偏好已保存。");
+    if (hasSearched) {
+      await runSearch();
+    }
   } catch (error) {
     showToast(error.message, true);
+  }
+});
+
+accountButton.addEventListener("click", () => {
+  accountModal.hidden = false;
+  usernameInput.focus();
+});
+
+closeAccountButton.addEventListener("click", closeAccountModal);
+cancelAccountButton.addEventListener("click", closeAccountModal);
+
+accountModal.addEventListener("click", (event) => {
+  if (event.target === accountModal) {
+    closeAccountModal();
   }
 });
 
@@ -107,6 +137,7 @@ credentialForm.addEventListener("submit", async (event) => {
     });
     passwordInput.value = "";
     showToast("账号已保存到本机。");
+    closeAccountModal();
     await loadStatus();
   } catch (error) {
     showToast(error.message, true);
@@ -116,9 +147,9 @@ credentialForm.addEventListener("submit", async (event) => {
 async function loadStatus() {
   try {
     const payload = await requestJson("/api/status");
-    const sync = payload.sync;
+    const sync = payload.sync || {};
     const pieces = [];
-    pieces.push(`本地教室数：${payload.rooms_count}`);
+    pieces.push(`本地教室数：${payload.rooms_count ?? 0}`);
     if (sync.last_sync_date) {
       pieces.push(`最近同步：${sync.last_sync_date}`);
     } else {
@@ -131,6 +162,7 @@ async function loadStatus() {
       pieces.push(`同步错误：${sync.message}`);
     }
     statusText.textContent = pieces.join(" · ");
+    accountButton.textContent = payload.has_username ? "账号已保存" : "保存教务账号";
   } catch (error) {
     statusText.textContent = `状态读取失败：${error.message}`;
   }
@@ -147,10 +179,11 @@ async function loadBuildings() {
     allOption.textContent = "全部教学楼";
     buildingInput.append(allOption);
 
-    for (const item of payload.items) {
+    for (const item of toArray(payload.items)) {
+      const building = item || {};
       const option = document.createElement("option");
-      option.value = item.value;
-      option.textContent = item.label;
+      option.value = building.value || "";
+      option.textContent = building.label || building.value || "-";
       buildingInput.append(option);
     }
     buildingInput.value = currentValue;
@@ -162,34 +195,62 @@ async function loadBuildings() {
 async function loadPreferences() {
   try {
     const payload = await requestJson("/api/preferences");
-    buildingPrefs.value = payload.preferred_buildings.join(", ");
-    roomPrefs.value = payload.preferred_room_prefixes.join(", ");
+    buildingPrefs.value = toArray(payload.preferred_buildings).join(", ");
+    roomPrefs.value = toArray(payload.preferred_room_prefixes).join(", ");
   } catch (error) {
     showToast(error.message, true);
   }
 }
 
 function renderResults(items) {
-  resultCount.textContent = `${items.length} 间可用`;
+  const results = toArray(items);
+  resultCount.textContent = `${periodRangeText()} 可用 · ${results.length} 间`;
   resultsBody.textContent = "";
-  if (!items.length) {
+  if (!results.length) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td colspan="5" class="empty">这个时间段没有查到空教室。</td>`;
+    row.innerHTML = `<td colspan="5" class="empty">所选节次没有查到可用教室。</td>`;
     resultsBody.append(row);
     return;
   }
 
-  for (const item of items) {
+  for (const item of results) {
+    const result = item || {};
     const row = document.createElement("tr");
     row.innerHTML = `
-      <td>${escapeHtml(item.raw_name)}</td>
-      <td>${escapeHtml(item.building_label || item.building || "-")}</td>
-      <td>第 ${item.free_until_period} 节</td>
-      <td>${item.continuous_free_periods} 节</td>
-      <td>${item.preference_matched ? '<span class="badge">偏好</span>' : ""}</td>
+      <td>${escapeHtml(result.raw_name || "-")}</td>
+      <td>${escapeHtml(result.building_label || result.building || "-")}</td>
+      <td>${renderPeriodStatuses(result.period_statuses)}</td>
+      <td class="result-meta">${escapeHtml(result.continuous_free_periods ?? "-")} 节</td>
+      <td>${result.preference_matched ? '<span class="badge">偏好</span>' : ""}</td>
     `;
     resultsBody.append(row);
   }
+}
+
+function renderPeriodStatuses(statuses) {
+  if (!Array.isArray(statuses)) {
+    return '<span class="result-meta">暂无状态</span>';
+  }
+  const dots = statuses
+    .map((status) => {
+      const item = status || {};
+      const classes = ["period-dot"];
+      if (!item.available) {
+        classes.push("busy");
+      }
+      if (item.selected) {
+        classes.push("selected");
+      }
+      const period = item.period ?? "-";
+      const title = `第 ${period} 节${item.available ? "空闲" : "占用"}${
+        item.selected ? "，当前查询" : ""
+      }`;
+      return `<span class="${classes.join(" ")}" title="${escapeHtml(title)}">${escapeHtml(
+        period,
+      )}</span>`;
+    })
+    .join("");
+  return `<span class="status-strip" aria-label="今日节次状态">${dots}</span>`;
 }
 
 async function requestJson(url, options = {}) {
@@ -208,6 +269,10 @@ function splitCsv(value) {
     .filter(Boolean);
 }
 
+function toArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
 function showToast(message, isError = false) {
   toast.textContent = message;
   toast.classList.toggle("error", isError);
@@ -216,6 +281,18 @@ function showToast(message, isError = false) {
   showToast.timer = window.setTimeout(() => {
     toast.classList.remove("show");
   }, 3600);
+}
+
+function closeAccountModal() {
+  accountModal.hidden = true;
+  passwordInput.value = "";
+}
+
+function periodRangeText() {
+  if (startPeriod.value === endPeriod.value) {
+    return `第 ${startPeriod.value} 节`;
+  }
+  return `第 ${startPeriod.value}-${endPeriod.value} 节`;
 }
 
 function escapeHtml(value) {
