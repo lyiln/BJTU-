@@ -9,6 +9,7 @@ from .storage import (
     get_connection,
     init_db,
     load_settings,
+    prune_occupancies_outside_retention_window,
     save_sync_state,
     upsert_rooms_and_occupancies,
 )
@@ -30,6 +31,7 @@ async def sync_today(target_day: date | None = None, headed: bool = False) -> st
         if not rooms:
             raise SyncError("教室查询页没有解析到教室数据，可能页面结构需要校准。")
         upsert_rooms_and_occupancies(conn, rooms, occupancies, day)
+        prune_occupancies_outside_retention_window(conn, day)
         message = f"同步完成：{len(rooms)} 间教室，{len(occupancies)} 条占用记录。"
         save_sync_state(conn, synced_day=day, status="ok", message=message)
         return message
@@ -167,6 +169,7 @@ async def sync_from_html_file(path: Path, target_day: date) -> str:
     html = path.read_text(encoding="utf-8")
     rooms, occupancies = parse_classroom_html(html, target_day)
     upsert_rooms_and_occupancies(conn, rooms, occupancies, target_day)
+    prune_occupancies_outside_retention_window(conn, target_day)
     message = f"从 HTML 样本导入完成：{len(rooms)} 间教室，{len(occupancies)} 条占用记录。"
     save_sync_state(conn, synced_day=target_day, status="ok", message=message)
     conn.close()

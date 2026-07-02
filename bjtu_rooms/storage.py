@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -143,7 +143,17 @@ def upsert_rooms_and_occupancies(
             row["raw_name"]: row["id"]
             for row in conn.execute("select id, raw_name from rooms").fetchall()
         }
+        inserted_keys: set[tuple[str, date, int, int]] = set()
         for occupancy in occupancies:
+            occupancy_key = (
+                occupancy.raw_room_name,
+                occupancy.day,
+                occupancy.start_period,
+                occupancy.end_period,
+            )
+            if occupancy_key in inserted_keys:
+                continue
+            inserted_keys.add(occupancy_key)
             room_id = room_ids.get(occupancy.raw_room_name)
             if room_id is None:
                 continue
@@ -160,6 +170,27 @@ def upsert_rooms_and_occupancies(
                     occupancy.source,
                 ),
             )
+
+
+def occupancy_retention_window(reference_day: date) -> tuple[date, date]:
+    week_start = reference_day - timedelta(days=reference_day.isoweekday() - 1)
+    return week_start, week_start + timedelta(days=13)
+
+
+def prune_occupancies_outside_retention_window(
+    conn: sqlite3.Connection,
+    reference_day: date,
+) -> int:
+    keep_start, keep_end = occupancy_retention_window(reference_day)
+    cursor = conn.execute(
+        """
+        delete from occupancies
+        where day < ? or day > ?
+        """,
+        (keep_start.isoformat(), keep_end.isoformat()),
+    )
+    conn.commit()
+    return cursor.rowcount
 
 
 def load_rooms(conn: sqlite3.Connection) -> list[Room]:

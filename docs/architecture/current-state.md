@@ -14,13 +14,14 @@
 | `bjtu_rooms/app.py` | 确认 HTTP API、静态文件、应用生命周期 | 定义 `/api/status`、`/api/buildings`、`/api/search`、`/api/preferences`、`/api/credentials`、`/api/sync`；启动时可能异步同步。 |
 | `bjtu_rooms/models.py` | 确认核心数据类型 | 定义 `Room`、`Occupancy`、`Preference`、`PeriodStatus`、`SearchResult`、`SyncState`；`MAX_PERIOD = 7`。 |
 | `bjtu_rooms/core.py` | 确认搜索、排序、节次状态逻辑 | `search_empty_rooms()` 过滤已占用教室并生成 `period_statuses`；按偏好分、连续空闲、楼栋和自然教室号排序。 |
-| `bjtu_rooms/storage.py` | 确认 SQLite schema 和读写路径 | 数据库为 `data/rooms.sqlite3`；表包括 `rooms`、`occupancies`、`preferences`、`sync_state`。 |
-| `bjtu_rooms/sync.py` | 确认同步和 Playwright 抓取流程 | `sync_today()` 调用 `fetch_classroom_data()`，解析后写入数据库并保存同步状态。 |
+| `bjtu_rooms/storage.py` | 确认 SQLite schema、读写路径、占用记录保留策略 | 数据库为 `data/rooms.sqlite3`；表包括 `rooms`、`occupancies`、`preferences`、`sync_state`；`occupancy_retention_window()` 只保留本周和下周；`upsert_rooms_and_occupancies()` 会按教室/日期/节次范围去重。 |
+| `bjtu_rooms/sync.py` | 确认同步和 Playwright 抓取流程 | `sync_today()` 调用 `fetch_classroom_data()`，解析后写入数据库、清理保留窗口外占用记录，并保存同步状态。 |
 | `bjtu_rooms/parser.py` | 确认 HTML 解析策略 | 支持 JSON-like payload、BJTU 周视图表格、通用表格、文本兜底；白色背景视为空闲。 |
 | `bjtu_rooms/credentials.py` | 确认账号密码存储 | 用户名写入 settings；密码通过 `keyring` 存取，service name 为 `bjtu-room-finder`。 |
 | `static/index.html` | 确认页面结构、日期快捷入口和结果表列 | 日期输入旁有“今天”“明天”快捷按钮；同步按钮文案为“同步本周数据”；结果表当前列为教室、楼栋、今日状态、连续空闲、偏好。 |
 | `static/app.js` | 确认前端状态、fetch、日期切换、渲染逻辑 | 初始化读取状态/楼栋/偏好；搜索调用 `/api/search`；“今天”“明天”按钮分别设置本地今天/次日日期，已查询后会自动重查；`renderPeriodStatuses()` 渲染 1-7 节状态点。 |
 | `tests/test_core.py` | 确认核心行为测试 | 覆盖搜索排序、占用排除、`period_statuses` 生成和 `asdict()` 序列化结构。 |
+| `tests/test_storage.py` | 确认存储行为测试 | 覆盖占用记录入库去重，以及只保留本周和下周记录的清理窗口。 |
 
 ## Confirmed Facts
 | Fact | Evidence | Source Type | Confidence |
@@ -37,9 +38,12 @@
 | 前端遇到缺失 `period_statuses` 会显示“暂无状态”，不会再直接 `.map` 崩溃。 | `static/app.js:renderPeriodStatuses()` 先检查 `Array.isArray(statuses)`。 | Source Code | Confirmed |
 | SQLite 数据库路径是 `data/rooms.sqlite3`。 | `bjtu_rooms/storage.py:DB_PATH = DATA_DIR / "rooms.sqlite3"`。 | Source Code | Confirmed |
 | 同步状态保存在 `sync_state` 表，偏好保存在 `preferences` 表。 | `bjtu_rooms/storage.py:init_db()` 建表 SQL。 | Database Schema | Confirmed |
+| 占用记录会按本周一到下周日保留。 | `bjtu_rooms/storage.py:occupancy_retention_window()`；`tests/test_storage.py:test_prune_occupancies_keeps_current_and_next_week()`。 | Source Code / Test Code | Confirmed |
+| 启动和同步成功后会清理保留窗口外的占用记录。 | `bjtu_rooms/app.py:lifespan()` 调用 `prune_occupancies_outside_retention_window()`；`bjtu_rooms/sync.py:sync_today()` 同步成功后调用同一函数。 | Source Code | Confirmed |
+| 重复占用输入不会重复入库。 | `bjtu_rooms/storage.py:upsert_rooms_and_occupancies()` 使用 `inserted_keys` 跳过同一教室/日期/节次范围的重复项；`tests/test_storage.py:test_upsert_deduplicates_occupancies()`。 | Source Code / Test Code | Confirmed |
 | 账号用户名存入 settings，密码存入系统 keyring。 | `bjtu_rooms/credentials.py:get_username()`、`save_username()`、`save_password()`。 | Source Code | Confirmed |
 | 教务同步依赖 Playwright 打开 BJTU 教务系统并解析课堂占用 HTML。 | `bjtu_rooms/sync.py:fetch_classroom_data()` 使用 `async_playwright()`；`parse_classroom_html()` 处理 HTML。 | Source Code | Confirmed |
-| 最近提交为 `3c01697 Add project state handoff docs`。 | `git log --oneline -n 3` 输出。 | Config | Confirmed |
+| 最近日期快捷入口基线提交为 `74cf8c7 Add today and tomorrow date shortcuts`。 | `git log --oneline -n 3` 输出。 | Config | Confirmed |
 
 ## Entry Points
 | Entry | File | Function / Component | Evidence |
@@ -82,6 +86,7 @@
   -> [confirmed] bjtu_rooms.sync:fetch_classroom_data()
   -> [confirmed] bjtu_rooms.parser:parse_classroom_html()
   -> [confirmed] storage.upsert_rooms_and_occupancies()
+  -> [confirmed] storage.prune_occupancies_outside_retention_window()
   -> [confirmed] storage.save_sync_state()
 ```
 
@@ -95,6 +100,7 @@
 | Preferences | SQLite `preferences` table | `get_preference()` -> `preference_score()` | `storage.get_preference()` returns `Preference`; `core.preference_score()` scores building/prefix. |
 | Period statuses | `core.period_statuses()` | API `items[].period_statuses` -> UI status dots | `SearchResult.period_statuses`; frontend `renderPeriodStatuses()`. |
 | Sync state | `sync_today()` | SQLite `sync_state` -> `/api/status` -> topbar text | `save_sync_state()` and `app.status()`. |
+| Occupancy retention | `occupancy_retention_window(reference_day)` | `prune_occupancies_outside_retention_window()` | Keeps records from current Monday through next Sunday, inclusive. |
 | Credentials | Account modal | `/api/credentials` -> settings/keyring | `static/app.js` posts username/password; `credentials.save_credentials()` persists them. |
 
 ## State Transitions
@@ -115,6 +121,8 @@
 | `rooms` | Read all rooms | `bjtu_rooms/storage.py` | `load_rooms()` selects raw_name/building/room/campus. |
 | `occupancies` | Create table and day/room index | `bjtu_rooms/storage.py` | `init_db()` SQL includes `idx_occupancies_day_room`. |
 | `occupancies` | Replace affected days then insert occupancies | `bjtu_rooms/storage.py` | `upsert_rooms_and_occupancies()` deletes by day then inserts records. |
+| `occupancies` | Skip duplicate occupancy input | `bjtu_rooms/storage.py` | `upsert_rooms_and_occupancies()` tracks `(raw_room_name, day, start_period, end_period)` while inserting. |
+| `occupancies` | Delete records outside current-week/next-week retention window | `bjtu_rooms/storage.py` | `prune_occupancies_outside_retention_window()` deletes days before current Monday or after next Sunday. |
 | `occupancies` | Read occupancies for selected day | `bjtu_rooms/storage.py` | `load_occupancy_by_room()` joins rooms and occupancies by room_id. |
 | `preferences` | Create table and default row | `bjtu_rooms/storage.py` | Defaults are `["yf"]` and `["4", "5", "6"]`. |
 | `preferences` | Read/write preference | `bjtu_rooms/storage.py` | `get_preference()` / `save_preference()`. |
@@ -133,8 +141,9 @@
 
 ## Async Jobs
 - App startup uses `lifespan()` in `bjtu_rooms/app.py`; if `sync_state.last_sync_date != date.today()`, it schedules `_startup_sync()` with `asyncio.create_task()`.
+- App startup also prunes `occupancies` outside the current-week/next-week retention window before checking sync state.
 - `_startup_sync()` catches all exceptions and suppresses them. Confirmed behavior: startup sync failures do not prevent the app from serving.
-- Manual sync is `POST /api/sync`; it awaits `sync_today()` and returns either `{"ok": true, "message": ...}` or an HTTP 400 with error detail. The UI labels this as syncing weekly data because the BJTU room page is parsed as a week view.
+- Manual sync is `POST /api/sync`; it awaits `sync_today()`, writes current BJTU week data, prunes occupancy records outside the retention window, and returns either `{"ok": true, "message": ...}` or an HTTP 400 with error detail. The UI labels this as syncing weekly data because the BJTU room page is parsed as a week view.
 
 ## Error Handling
 - `/api/search` catches `ValueError` from `validate_period_range()` and returns HTTP 400 with the message.
@@ -150,6 +159,8 @@
 - `fetch_classroom_data()` falls back to headed Playwright mode if the fetched page still looks like a login page and the initial run was headless.
 - Parser supports several structures, but BJTU HTML changes remain a known parser maintenance risk.
 - Clicking “今天” or “明天” before any search only changes the date input; clicking after a successful search also refreshes results.
+- On Sunday, the retention window is still current Monday through next Sunday, so next Monday remains queryable after data has been synced.
+- Records older than current Monday and later than next Sunday are pruned on startup and after successful sync; `rooms` metadata is not pruned.
 
 ## Risks
 | Risk | Evidence | Impact | Suggested Next Step |
@@ -158,6 +169,7 @@
 | Startup sync errors are silent. | `_startup_sync()` catches `Exception` and `pass`es. | User may not know startup auto-sync failed unless checking `/api/status` after manual sync. | Consider surfacing startup sync failure through `sync_state` in a future task. |
 | Parser depends on current BJTU page semantics. | `parser.py` uses table text, titles, background colors, and regexes. | Sync may parse zero rooms or wrong occupancies if upstream HTML changes. | Keep sample HTML-based parser tests updated when BJTU page changes. |
 | Credential storage depends on keyring availability. | `credentials.py` raises/returns based on `keyring` import and keychain operations. | Sync cannot run without saved password. | Document platform setup or provide clearer UI error if keyring fails. |
+| Retention cleanup only deletes occupancy rows. | `prune_occupancies_outside_retention_window()` deletes from `occupancies`; `rooms` are retained. | Room metadata can accumulate if the upstream room list changes substantially. | Add room pruning only if stale room metadata becomes a real issue. |
 
 ## Possible Causes to Verify
 | Possible Cause | Missing Evidence | Files to Check Next |
@@ -171,10 +183,11 @@
 - Should startup auto-sync failures be recorded in `sync_state` instead of silently ignored?
 - Should there be an integration/API test for `/api/search` response shape? Current test verifies core dataclass serialization, not the FastAPI route.
 - Should developer startup default to `--reload` or a separate dev script to avoid stale Python backends?
+- Should old `rooms` with no retained occupancies ever be pruned, or should room metadata remain as the latest known classroom inventory?
 
 ## Recommended Next Step
 - `task-planning-flow`：如果要调整行为，例如记录启动同步失败、增加 API 集成测试、改变 dev 启动方式，先出小任务方案。
 - `bugfix-flow`：如果再次出现搜索状态缺失、同步错误、解析结果异常，先按 bug 流程复现和定位。
 - `execute-agent`：如果已有明确方案并批准实现，再修改源码和测试。
-- `review-agent`：如果需要对最近提交 `3c01697 Add project state handoff docs` 或后续功能 diff 做第二视角复核，可只读审查 diff。
+- `review-agent`：如果需要对日期快捷入口提交 `74cf8c7 Add today and tomorrow date shortcuts` 或后续功能 diff 做第二视角复核，可只读审查 diff。
 - `sync-docs-flow`：后续如果继续修改 API、状态流转或数据库逻辑，应同步更新本文档或拆分到更细的模块文档。

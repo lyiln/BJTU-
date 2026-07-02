@@ -22,6 +22,7 @@ from .storage import (
     init_db,
     load_occupancy_by_room,
     load_rooms,
+    prune_occupancies_outside_retention_window,
     save_preference,
 )
 from .sync import sync_today
@@ -43,6 +44,7 @@ class CredentialPayload(BaseModel):
 async def lifespan(app: FastAPI):
     conn = get_connection()
     init_db(conn)
+    prune_occupancies_outside_retention_window(conn, date.today())
     state = get_sync_state(conn)
     conn.close()
     if state.last_sync_date != date.today():
