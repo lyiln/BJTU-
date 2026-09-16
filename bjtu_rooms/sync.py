@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from collections.abc import Mapping, Sequence
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from .credentials import get_password, get_username
+from .models import Occupancy
 from .parser import parse_classroom_html
 from .storage import (
     get_connection,
@@ -30,6 +34,7 @@ async def sync_today(target_day: date | None = None, headed: bool = False) -> st
         rooms, occupancies = await fetch_classroom_data(day, headed=headed)
         if not rooms:
             raise SyncError("教室查询页没有解析到教室数据，可能页面结构需要校准。")
+        _validate_occupancy_week(occupancies, day)
         upsert_rooms_and_occupancies(conn, rooms, occupancies, day)
         prune_occupancies_outside_retention_window(conn, day)
         message = f"同步完成：{len(rooms)} 间教室，{len(occupancies)} 条占用记录。"
@@ -55,21 +60,18 @@ async def fetch_classroom_data(target_day: date, headed: bool = False):
         raise SyncError("请先在页面中保存教务系统账号和密码。")
 
     settings = load_settings()
-    week_number = settings.get("week_number") or _week_number_from_semester_start(
-        settings.get("semester_start"),
-        target_day,
-    )
-    if not week_number:
-        week_number = 18
-
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=not headed)
         page = await browser.new_page()
         try:
             await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30_000)
             await _login(page, username, password)
+            server_week_number = None
+            if not _configured_week_number(settings, target_day):
+                await page.goto(ROOM_VIEW_URL, wait_until="networkidle", timeout=30_000)
+                server_week_number = _week_number_from_url(page.url)
             await page.goto(
-                f"{ROOM_VIEW_URL}?zc={week_number}&perpage=500",
+                _room_view_url(settings, target_day, server_week_number),
                 wait_until="networkidle",
                 timeout=30_000,
             )
@@ -163,11 +165,60 @@ def _week_number_from_semester_start(semester_start: str | None, target_day: dat
     return delta // 7 + 1
 
 
+def _configured_week_number(settings: Mapping[str, Any], target_day: date) -> int | None:
+    configured = settings.get("week_number")
+    if isinstance(configured, int) and configured > 0:
+        return configured
+    if isinstance(configured, str) and configured.isdigit() and int(configured) > 0:
+        return int(configured)
+    semester_start = settings.get("semester_start")
+    if not isinstance(semester_start, str):
+        return None
+    return _week_number_from_semester_start(semester_start, target_day)
+
+
+def _room_view_url(
+    settings: Mapping[str, Any],
+    target_day: date,
+    server_week_number: int | None = None,
+) -> str:
+    week_number = _configured_week_number(settings, target_day) or server_week_number
+    if not week_number:
+        raise SyncError("教务系统没有返回当前教学周，无法读取完整教室列表。")
+    return f"{ROOM_VIEW_URL}?zc={week_number}&perpage=500"
+
+
+def _week_number_from_url(url: str) -> int | None:
+    values = parse_qs(urlparse(url).query).get("zc", [])
+    if not values or not values[0].isdigit():
+        return None
+    return int(values[0])
+
+
+def _validate_occupancy_week(
+    occupancies: Sequence[Occupancy],
+    target_day: date,
+) -> None:
+    if not occupancies:
+        return
+    week_start = target_day - timedelta(days=target_day.isoweekday() - 1)
+    week_end = week_start + timedelta(days=6)
+    if all(week_start <= occupancy.day <= week_end for occupancy in occupancies):
+        return
+    first_day = min(occupancy.day for occupancy in occupancies)
+    last_day = max(occupancy.day for occupancy in occupancies)
+    raise SyncError(
+        "教务系统返回的占用日期与查询日期不在同一周："
+        f"查询 {target_day.isoformat()}，返回 {first_day.isoformat()} 至 {last_day.isoformat()}。"
+    )
+
+
 async def sync_from_html_file(path: Path, target_day: date) -> str:
     conn = get_connection()
     init_db(conn)
     html = path.read_text(encoding="utf-8")
     rooms, occupancies = parse_classroom_html(html, target_day)
+    _validate_occupancy_week(occupancies, target_day)
     upsert_rooms_and_occupancies(conn, rooms, occupancies, target_day)
     prune_occupancies_outside_retention_window(conn, target_day)
     message = f"从 HTML 样本导入完成：{len(rooms)} 间教室，{len(occupancies)} 条占用记录。"

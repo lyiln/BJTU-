@@ -1,8 +1,17 @@
 # BJTU Room Finder Current State
 
 ## Scope
-- 本次分析范围：当前代码库的功能边界、前后端入口、搜索/同步数据流、数据库读写、外部依赖、最近修复过的状态渲染问题。
-- 明确不包含：未读取运行时私有数据文件 `data/**` 的内容；未重新执行线上教务系统同步；未审查第三方服务当前可用性；未修改源码、测试、配置或依赖。
+- 当前文档覆盖：代码库功能边界、前后端入口、搜索/同步数据流、数据库读写、外部依赖，以及 2026-09-08 修复的错误教学周同步问题。
+- 本次运行时检查没有输出账号内容；已使用现有系统凭据执行线上同步，并通过 SQLite 聚合统计和搜索结果验证。
+
+## Latest Confirmed Change (2026-09-08)
+- 观察到 `sync_state` 记录当天同步成功（319 间教室、120 条占用），但 `occupancies` 表为 0 条；设置中没有 `week_number` 或 `semester_start`。
+- 根因：`bjtu_rooms/sync.py` 在缺少教学周配置时固定请求 `zc=18`，解析出的旧周占用随后被当前周/下周保留窗口全部清理，导致搜索把全部教室误判为空闲。
+- 修复：没有显式或可推导教学周时，先请求教室页并从重定向 URL 解析服务器当前周，再以 `zc=<当前周>&perpage=500` 请求完整教室列表；有配置时仍保留原有显式周行为。
+- 防护：`_validate_occupancy_week()` 在写库前验证所有非空占用数据均属于目标周；出现错周或混周时同步报错且不覆盖现有占用数据。
+- 实测：第一次仅省略 `zc` 的方案被服务器重定向为当前周但丢失 `perpage=500`，只能读到 20 间；两步请求修复后在 2026-09-08 读到 319 间教室和 5714 条 2026-09-07 至 2026-09-13 的占用记录。
+- 2026-09-11 最终运行验收：重启服务后自动同步读到 319 间教室和 5893 条当周占用记录；`GET /api/search?date=2026-09-11&start_period=1&end_period=2` 返回 114 间空教室及逐节状态。
+- 回归覆盖：`tests/test_sync.py` 覆盖服务器周次解析、完整列表 URL、由学期开始日推导周次、错周拒绝和目标周接受。
 
 ## Files Read
 | File | Why Read | Key Evidence |
@@ -16,6 +25,7 @@
 | `bjtu_rooms/core.py` | 确认搜索、排序、节次状态逻辑 | `search_empty_rooms()` 过滤已占用教室并生成 `period_statuses`；按偏好分、连续空闲、楼栋和自然教室号排序。 |
 | `bjtu_rooms/storage.py` | 确认 SQLite schema、读写路径、占用记录保留策略 | 数据库为 `data/rooms.sqlite3`；表包括 `rooms`、`occupancies`、`preferences`、`sync_state`；`occupancy_retention_window()` 只保留本周和下周；`upsert_rooms_and_occupancies()` 会按教室/日期/节次范围去重。 |
 | `bjtu_rooms/sync.py` | 确认同步和 Playwright 抓取流程 | `sync_today()` 调用 `fetch_classroom_data()`，解析后写入数据库、清理保留窗口外占用记录，并保存同步状态。 |
+| `tests/test_sync.py` | 确认同步周选择和错周保护 | 覆盖服务器周次解析、完整列表 URL、配置学期开始日时计算周次，以及占用日期周验证。 |
 | `bjtu_rooms/parser.py` | 确认 HTML 解析策略 | 支持 JSON-like payload、BJTU 周视图表格、通用表格、文本兜底；白色背景视为空闲。 |
 | `bjtu_rooms/credentials.py` | 确认账号密码存储 | 用户名写入 settings；密码通过 `keyring` 存取，service name 为 `bjtu-room-finder`。 |
 | `static/index.html` | 确认页面结构、日期快捷入口和结果表列 | 日期输入旁有“今天”“明天”快捷按钮；同步按钮文案为“同步本周数据”；结果表当前列为教室、楼栋、今日状态、连续空闲、偏好。 |
@@ -43,6 +53,8 @@
 | 重复占用输入不会重复入库。 | `bjtu_rooms/storage.py:upsert_rooms_and_occupancies()` 使用 `inserted_keys` 跳过同一教室/日期/节次范围的重复项；`tests/test_storage.py:test_upsert_deduplicates_occupancies()`。 | Source Code / Test Code | Confirmed |
 | 账号用户名存入 settings，密码存入系统 keyring。 | `bjtu_rooms/credentials.py:get_username()`、`save_username()`、`save_password()`。 | Source Code | Confirmed |
 | 教务同步依赖 Playwright 打开 BJTU 教务系统并解析课堂占用 HTML。 | `bjtu_rooms/sync.py:fetch_classroom_data()` 使用 `async_playwright()`；`parse_classroom_html()` 处理 HTML。 | Source Code | Confirmed |
+| 未配置 `week_number` / `semester_start` 时不再固定请求第 18 周。 | `fetch_classroom_data()` 先请求默认教室页，`_week_number_from_url()` 从重定向 URL 读取当前周，再由 `_room_view_url()` 生成含 `zc` 和 `perpage=500` 的 URL；`tests/test_sync.py`。 | Source Code / Test Code | Confirmed |
+| 非空占用数据若包含目标周之外的日期，同步会在写库前失败。 | `bjtu_rooms/sync.py:_validate_occupancy_week()` 在 `upsert_rooms_and_occupancies()` 前调用；`tests/test_sync.py`。 | Source Code / Test Code | Confirmed |
 | 最近日期快捷入口基线提交为 `74cf8c7 Add today and tomorrow date shortcuts`。 | `git log --oneline -n 3` 输出。 | Config | Confirmed |
 
 ## Entry Points
@@ -84,7 +96,10 @@
   -> [confirmed] bjtu_rooms.app:sync()
   -> [confirmed] bjtu_rooms.sync:sync_today()
   -> [confirmed] bjtu_rooms.sync:fetch_classroom_data()
+  -> [confirmed] sync resolves the configured week or reads the server week from the default-page redirect
+  -> [confirmed] sync._room_view_url() requests that week with perpage=500
   -> [confirmed] bjtu_rooms.parser:parse_classroom_html()
+  -> [confirmed] sync._validate_occupancy_week()
   -> [confirmed] storage.upsert_rooms_and_occupancies()
   -> [confirmed] storage.prune_occupancies_outside_retention_window()
   -> [confirmed] storage.save_sync_state()
@@ -100,6 +115,8 @@
 | Preferences | SQLite `preferences` table | `get_preference()` -> `preference_score()` | `storage.get_preference()` returns `Preference`; `core.preference_score()` scores building/prefix. |
 | Period statuses | `core.period_statuses()` | API `items[].period_statuses` -> UI status dots | `SearchResult.period_statuses`; frontend `renderPeriodStatuses()`. |
 | Sync state | `sync_today()` | SQLite `sync_state` -> `/api/status` -> topbar text | `save_sync_state()` and `app.status()`. |
+| Teaching week selection | settings + target date + default-page redirect | `_week_number_from_url()` / `_room_view_url()` -> BJTU room-view request | Explicit `week_number` wins; otherwise `semester_start` derives a week; with neither, the server-selected `zc` is read and reused with `perpage=500`. |
+| Parsed occupancy dates | `parse_classroom_html()` | `_validate_occupancy_week()` -> database write or `SyncError` | Non-empty results containing any date outside the target week are rejected before upsert. |
 | Occupancy retention | `occupancy_retention_window(reference_day)` | `prune_occupancies_outside_retention_window()` | Keeps records from current Monday through next Sunday, inclusive. |
 | Credentials | Account modal | `/api/credentials` -> settings/keyring | `static/app.js` posts username/password; `credentials.save_credentials()` persists them. |
 
@@ -149,6 +166,7 @@
 - `/api/search` catches `ValueError` from `validate_period_range()` and returns HTTP 400 with the message.
 - `/api/credentials` catches `CredentialError` and returns HTTP 400.
 - `/api/sync` catches general exceptions and returns HTTP 400.
+- Wrong-week occupancy payloads raise `SyncError` before database replacement and are surfaced by `/api/sync` as HTTP 400.
 - `requestJson()` in `static/app.js` parses JSON, checks `response.ok`, and throws `payload.detail || "请求失败"`.
 - Frontend data-shape safeguards currently exist for arrays from `payload.items`, `payload.preferred_buildings`, `payload.preferred_room_prefixes`, building list items, missing `payload.sync`, and missing `period_statuses`.
 
@@ -168,6 +186,7 @@
 | Running service can be stale after code changes. | `cli.py` uses `reload=False`; previous issue manifested as frontend expecting `period_statuses` while old backend did not return it. | UI can show fallback “暂无状态” or mismatch current code. | Restart `uv run bjtu-rooms` after backend code changes; use reload command for development. |
 | Startup sync errors are silent. | `_startup_sync()` catches `Exception` and `pass`es. | User may not know startup auto-sync failed unless checking `/api/status` after manual sync. | Consider surfacing startup sync failure through `sync_state` in a future task. |
 | Parser depends on current BJTU page semantics. | `parser.py` uses table text, titles, background colors, and regexes. | Sync may parse zero rooms or wrong occupancies if upstream HTML changes. | Keep sample HTML-based parser tests updated when BJTU page changes. |
+| Server-current-week discovery depends on the redirected room-view URL containing `zc`. | `fetch_classroom_data()` reads `page.url`; 2026-09-08 live verification redirected to `?zc=1`. | If the upstream redirect contract changes, sync will fail with a clear error before parsing or replacing data. | Update `_week_number_from_url()` or use the page's week selector if the upstream URL contract changes. |
 | Credential storage depends on keyring availability. | `credentials.py` raises/returns based on `keyring` import and keychain operations. | Sync cannot run without saved password. | Document platform setup or provide clearer UI error if keyring fails. |
 | Retention cleanup only deletes occupancy rows. | `prune_occupancies_outside_retention_window()` deletes from `occupancies`; `rooms` are retained. | Room metadata can accumulate if the upstream room list changes substantially. | Add room pruning only if stale room metadata becomes a real issue. |
 
